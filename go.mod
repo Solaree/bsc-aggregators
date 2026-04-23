@@ -1,4 +1,4 @@
-module github.com/Solaree/aggregators
+module github.com/Solaree/bsc-aggregators
 
 go 1.24.5
 

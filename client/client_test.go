@@ -41,7 +41,7 @@ func TestAggregators_BuildTx(t *testing.T) {
 		t.Run(a.Name(), func(t *testing.T) {
 			q, err := a.BuildTx(ctx, testParams)
 			if err != nil {
-				t.Logf("error: %v", err)
+				t.Errorf("error: %v", err)
 				return
 			}
 			if q.Contract == (common.Address{}) || len(q.Calldata) == 0 {

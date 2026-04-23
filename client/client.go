@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -44,10 +43,8 @@ var (
 )
 
 func init() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Println("warn: no .env file found")
-	}
+	_ = godotenv.Load()
+	_ = godotenv.Load("../.env") // fallback
 
 	okxAPIKey = os.Getenv("OKX_API_KEY")
 	okxAPISecret = os.Getenv("OKX_API_SECRET")
