@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:docs.bebop.xyz)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:help.bebop.xyz)",
+      "WebFetch(domain:docs.bebop.sh)",
+      "WebFetch(domain:api.bebop.xyz)"
+    ]
+  }
+}
