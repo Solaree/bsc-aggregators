@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -75,6 +76,7 @@ type QuoteResult struct {
 	Calldata  []byte
 	Approval  common.Address
 	RawResult []byte
+	Route     string // human-readable path, e.g. "USDC → WBNB → USDT via PancakeSwap V3"
 }
 
 type Aggregator interface {
@@ -176,6 +178,86 @@ func parseUint(s string) uint64 {
 	return v
 }
 
+// ---------------------
+// Route helpers
+// ---------------------
+
+var bscSymbols = map[string]string{
+	// Stablecoins
+	"0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d": "USDC",
+	"0x55d398326f99059ff775485246999027b3197955": "USDT",
+	"0xe9e7cea3dedca5984780bafc599bd69add087d56": "BUSD",
+	"0x1af3f329e8be154074d8769d1ffa4ee058b1dbc3": "DAI",
+	"0x14016e85a25aeb13065688cafb43044c2ef86784": "TUSD",
+	"0x90c97f71e18723b0cf0dfa30ee176ab653e89f40": "FRAX",
+	"0x4bd17003473389a42daf6a0a729f6fdb328bbbd7": "VAI",
+	// Gas / wrapped
+	"0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": "BNB",
+	"0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c": "WBNB",
+	// BTC/ETH wrappers
+	"0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": "BTCB",
+	"0x2170ed0880ac9a755fd29b2688956bd959f933f8": "ETH",
+	// BSC DeFi / popular alts
+	"0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82": "CAKE",
+	"0xcf6bb5389c92bdda8a3747ddb454cb7a64626c63": "XVS",
+	"0x47bead2563dcbf3bf2c9407fea4dc236faba485a": "SXP",
+	"0x4b0f1812e5df2a09796481ff14017e6005508003": "TWT",
+	"0xe02df9e3e622debdd69fb838bb799e3f168902c5": "BAKE",
+	"0x8f0528ce5ef7b51152a59745befdd91d97091d2f": "ALPACA",
+	"0xa184088a740c695e156f91f5cc086a06bb78b827": "AUTO",
+	"0x9c65ab58d8d978db963e63f2bfb7121627e3a739": "MDX",
+	"0xca3f508b8e4dd382ee878a314789373d80a5190a": "BIFI",
+	// Bridged layer-1s
+	"0x7083609fce4d1d8dc0c979aab8c869ea2c873402": "DOT",
+	"0x3ee2200efb3400fabb9aacf31297cbdd1d435d47": "ADA",
+	"0xcc42724c6683b7e57334c4e856f4c9965ed682bd": "MATIC",
+	"0x4338665cbb7b2485a8855a139b75d5e34ab0db94": "LTC",
+	"0x8ff795a6f4d97e7887c79bea79aba5cc76444adf": "BCH",
+	"0xba2ae424d960c26247dd6c32edc70b295c744c43": "DOGE",
+	"0x1d2f0da169ceb9fc7b3144628db156f3f6c60dbe": "XRP",
+	"0x570a5d26f7765ecb712c0924e4de545b89fd43df": "SOL",
+	"0x1ce0c2827e2ef14d5c4f29a091d735a204794041": "AVAX",
+	"0xf8a0bf9cf54bb92f17374d9e9a321e6a111a51bd": "LINK",
+	"0x0d8ce2a99bb6e3b7db580ed848240e4a0f9ae153": "FIL",
+	// Cross-chain DeFi
+	"0xbf5140a22578168fd562dccf235e5d43a02ce9b1": "UNI",
+	"0xfb6115445bff7b52feb98650c87f44907e58f802": "AAVE",
+	"0x947950bce8af5feb0a5a4be30c1e15da75d0d3c3": "SUSHI",
+	"0xad6caeb32cd2c308980a548bd0bc5aa4306c6c18": "BAND",
+	"0x85e43bf8faaf04ceddcd03d6c07438b72606a988": "VIN",
+}
+
+func bscSymbol(addr string) string {
+	if s, ok := bscSymbols[strings.ToLower(addr)]; ok {
+		return s
+	}
+	if len(addr) > 10 {
+		return addr[:6] + ".." + addr[len(addr)-4:]
+	}
+	return addr
+}
+
+// buildRoute formats "A → B → C via DEX1, DEX2" from token addresses and dex names.
+func buildRoute(tokens, dexes []string) string {
+	syms := make([]string, len(tokens))
+	for i, t := range tokens {
+		syms[i] = bscSymbol(t)
+	}
+	r := strings.Join(syms, " → ")
+	seen := map[string]bool{}
+	var uniq []string
+	for _, d := range dexes {
+		if d != "" && !seen[d] {
+			seen[d] = true
+			uniq = append(uniq, d)
+		}
+	}
+	if len(uniq) > 0 {
+		r += " via " + strings.Join(uniq, ", ")
+	}
+	return r
+}
+
 func isNative(token common.Address) bool {
 	native := common.HexToAddress("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE")
 	return token == native
@@ -269,12 +351,9 @@ func (o *OKX) Quote(ctx context.Context, p QuoteParams) (*QuoteResult, error) {
 	}
 
 	return &QuoteResult{
-		amountOut,
-		parseUint(resp.Data[0].EstimateGasFee),
-		common.Address{},
-		nil,
-		common.Address{},
-		body,
+		AmountOut: amountOut,
+		GasUsed:   parseUint(resp.Data[0].EstimateGasFee),
+		RawResult: body,
 	}, nil
 }
 
@@ -310,6 +389,19 @@ func (o *OKX) BuildTx(ctx context.Context, p QuoteParams) (*QuoteResult, error) 
 		Data []struct {
 			RouterResult struct {
 				ToTokenAmount string `json:"toTokenAmount"`
+				DexRouterList []struct {
+					SubRouterList []struct {
+						DexProtocol []struct {
+							DexName string `json:"dexName"`
+						} `json:"dexProtocol"`
+						FromToken struct {
+							TokenContractAddress string `json:"tokenContractAddress"`
+						} `json:"fromToken"`
+						ToToken struct {
+							TokenContractAddress string `json:"tokenContractAddress"`
+						} `json:"toToken"`
+					} `json:"subRouterList"`
+				} `json:"dexRouterList"`
 			} `json:"routerResult"`
 			Tx struct {
 				Data  string `json:"data"`
@@ -341,13 +433,29 @@ func (o *OKX) BuildTx(ctx context.Context, p QuoteParams) (*QuoteResult, error) 
 		approval = contract
 	}
 
+	route := bscSymbol(p.TokenIn.Hex()) + " → " + bscSymbol(p.TokenOut.Hex())
+	if len(resp.Data[0].RouterResult.DexRouterList) > 0 {
+		tokens := []string{p.TokenIn.Hex()}
+		var dexes []string
+		for _, sub := range resp.Data[0].RouterResult.DexRouterList[0].SubRouterList {
+			tokens = append(tokens, sub.ToToken.TokenContractAddress)
+			for _, dp := range sub.DexProtocol {
+				dexes = append(dexes, dp.DexName)
+			}
+		}
+		if len(tokens) > 1 {
+			route = buildRoute(tokens, dexes)
+		}
+	}
+
 	return &QuoteResult{
-		amountOut,
-		parseUint(resp.Data[0].Tx.Gas),
-		contract,
-		calldata,
-		approval,
-		body,
+		AmountOut: amountOut,
+		GasUsed:   parseUint(resp.Data[0].Tx.Gas),
+		Contract:  contract,
+		Calldata:  calldata,
+		Approval:  approval,
+		RawResult: body,
+		Route:     route,
 	}, nil
 }
 
@@ -444,6 +552,29 @@ func (k *KyberSwap) BuildTx(ctx context.Context, p QuoteParams) (*QuoteResult, e
 		return nil, errors.New("kyberswap build: missing routeSummary/routerAddress")
 	}
 
+	// Extract route hops from routeSummary.
+	var rsMeta struct {
+		Route [][]struct {
+			TokenIn  string `json:"tokenIn"`
+			TokenOut string `json:"tokenOut"`
+			Exchange string `json:"exchange"`
+		} `json:"route"`
+	}
+	kyberRoute := bscSymbol(p.TokenIn.Hex()) + " → " + bscSymbol(p.TokenOut.Hex())
+	if json.Unmarshal(payload.Data.RouteSummary, &rsMeta) == nil && len(rsMeta.Route) > 0 {
+		tokens := []string{p.TokenIn.Hex()}
+		var dexes []string
+		for _, hop := range rsMeta.Route[0] {
+			tokens = append(tokens, hop.TokenOut)
+			if hop.Exchange != "" {
+				dexes = append(dexes, hop.Exchange)
+			}
+		}
+		if len(tokens) > 1 {
+			kyberRoute = buildRoute(tokens, dexes)
+		}
+	}
+
 	slippageBps := int(p.Slippage * 100)
 	if slippageBps > 2000 {
 		slippageBps = 2000
@@ -510,6 +641,7 @@ func (k *KyberSwap) BuildTx(ctx context.Context, p QuoteParams) (*QuoteResult, e
 		Calldata:  calldata,
 		Approval:  approval,
 		RawResult: body,
+		Route:     kyberRoute,
 	}, nil
 }
 
@@ -634,6 +766,7 @@ func (o *OpenOcean) BuildTx(ctx context.Context, p QuoteParams) (*QuoteResult, e
 			To           string         `json:"to"`
 			Data         string         `json:"data"`
 			Value        string         `json:"value"`
+			Path         []string       `json:"path"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -659,6 +792,11 @@ func (o *OpenOcean) BuildTx(ctx context.Context, p QuoteParams) (*QuoteResult, e
 		approval = contract
 	}
 
+	ooRoute := bscSymbol(p.TokenIn.Hex()) + " → " + bscSymbol(p.TokenOut.Hex())
+	if len(resp.Data.Path) >= 2 {
+		ooRoute = buildRoute(resp.Data.Path, nil)
+	}
+
 	return &QuoteResult{
 		AmountOut: amountOut,
 		GasUsed:   uint64(resp.Data.EstimatedGas),
@@ -666,6 +804,7 @@ func (o *OpenOcean) BuildTx(ctx context.Context, p QuoteParams) (*QuoteResult, e
 		Calldata:  calldata,
 		Approval:  approval,
 		RawResult: body,
+		Route:     ooRoute,
 	}, nil
 }
 
@@ -902,6 +1041,31 @@ func (p *ParaSwap) BuildTx(ctx context.Context, q QuoteParams) (*QuoteResult, er
 
 	amountOut, _ := mustBig(pr.DestAmount)
 
+	var prMeta struct {
+		BestRoute []struct {
+			Swaps []struct {
+				DestToken     string `json:"destToken"`
+				SwapExchanges []struct {
+					Exchange string `json:"exchange"`
+				} `json:"swapExchanges"`
+			} `json:"swaps"`
+		} `json:"bestRoute"`
+	}
+	psRoute := bscSymbol(q.TokenIn.Hex()) + " → " + bscSymbol(q.TokenOut.Hex())
+	if json.Unmarshal(priceRouteRaw, &prMeta) == nil && len(prMeta.BestRoute) > 0 {
+		tokens := []string{q.TokenIn.Hex()}
+		var dexes []string
+		for _, swap := range prMeta.BestRoute[0].Swaps {
+			tokens = append(tokens, swap.DestToken)
+			for _, ex := range swap.SwapExchanges {
+				dexes = append(dexes, ex.Exchange)
+			}
+		}
+		if len(tokens) > 1 {
+			psRoute = buildRoute(tokens, dexes)
+		}
+	}
+
 	return &QuoteResult{
 		AmountOut: amountOut,
 		GasUsed:   parseUint(txResp.Gas),
@@ -909,6 +1073,7 @@ func (p *ParaSwap) BuildTx(ctx context.Context, q QuoteParams) (*QuoteResult, er
 		Calldata:  calldata,
 		Approval:  approval,
 		RawResult: body,
+		Route:     psRoute,
 	}, nil
 }
 
@@ -949,6 +1114,17 @@ type liFiQuoteResp struct {
 		Value    string `json:"value"`
 		GasLimit string `json:"gasLimit"`
 	} `json:"transactionRequest"`
+	Tool        string `json:"tool"`
+	ToolDetails struct {
+		Name string `json:"name"`
+	} `json:"toolDetails"`
+	IncludedSteps []struct {
+		Type        string `json:"type"` // "swap", "fee", "cross", …
+		Tool        string `json:"tool"`
+		ToolDetails struct {
+			Name string `json:"name"`
+		} `json:"toolDetails"`
+	} `json:"includedSteps"`
 }
 
 // Quote: GET /v1/quote
@@ -1088,6 +1264,29 @@ func (l *LiFi) BuildTx(ctx context.Context, p QuoteParams) (*QuoteResult, error)
 		}
 	}
 
+	lifiRoute := bscSymbol(p.TokenIn.Hex()) + " → " + bscSymbol(p.TokenOut.Hex())
+	// Top-level tool is the primary DEX. Only fall back to includedSteps
+	// (filtering for swap-type steps) when the top-level fields are empty —
+	// this avoids picking up LiFi's own "Integrator Fee" step.
+	toolName := resp.ToolDetails.Name
+	if toolName == "" {
+		toolName = resp.Tool
+	}
+	if toolName == "" {
+		for _, s := range resp.IncludedSteps {
+			if s.Type == "swap" {
+				toolName = s.ToolDetails.Name
+				if toolName == "" {
+					toolName = s.Tool
+				}
+				break
+			}
+		}
+	}
+	if toolName != "" {
+		lifiRoute += " via " + toolName
+	}
+
 	return &QuoteResult{
 		AmountOut: amountOut,
 		GasUsed:   gas,
@@ -1095,6 +1294,7 @@ func (l *LiFi) BuildTx(ctx context.Context, p QuoteParams) (*QuoteResult, error)
 		Calldata:  calldata,
 		Approval:  approval,
 		RawResult: body,
+		Route:     lifiRoute,
 	}, nil
 }
 
@@ -1188,7 +1388,8 @@ func (o *OneInch) BuildTx(ctx context.Context, p QuoteParams) (*QuoteResult, err
 	q.Set("amount", p.AmountIn.String())
 	q.Set("from", o.user.Hex())
 	q.Set("slippage", strconv.FormatFloat(sl, 'f', -1, 64))
-	q.Set("disableEstimate", "true") // skip on-chain simulation; we do our own
+	q.Set("disableEstimate", "true")  // skip on-chain simulation; we do our own
+	q.Set("includeProtocols", "true") // receive routing hops for display
 
 	req, err := newGET(o.baseURL()+"/swap", q)
 	if err != nil {
@@ -1203,7 +1404,13 @@ func (o *OneInch) BuildTx(ctx context.Context, p QuoteParams) (*QuoteResult, err
 
 	var resp struct {
 		DstAmount string `json:"dstAmount"`
-		Tx        struct {
+		Protocols [][][]struct {
+			Name             string `json:"name"`
+			Part             int    `json:"part"`
+			FromTokenAddress string `json:"fromTokenAddress"`
+			ToTokenAddress   string `json:"toTokenAddress"`
+		} `json:"protocols"`
+		Tx struct {
 			To   string `json:"to"`
 			Data string `json:"data"`
 			Gas  uint64 `json:"gas"`
@@ -1230,6 +1437,29 @@ func (o *OneInch) BuildTx(ctx context.Context, p QuoteParams) (*QuoteResult, err
 		approval = contract
 	}
 
+	inchRoute := bscSymbol(p.TokenIn.Hex()) + " → " + bscSymbol(p.TokenOut.Hex())
+	if len(resp.Protocols) > 0 {
+		tokens := []string{p.TokenIn.Hex()}
+		seen := map[string]bool{}
+		var dexes []string
+		for _, hop := range resp.Protocols {
+			if len(hop) > 0 && len(hop[0]) > 0 {
+				tokens = append(tokens, hop[0][0].ToTokenAddress)
+			}
+			for _, split := range hop {
+				for _, part := range split {
+					if !seen[part.Name] {
+						seen[part.Name] = true
+						dexes = append(dexes, part.Name)
+					}
+				}
+			}
+		}
+		if len(tokens) > 1 {
+			inchRoute = buildRoute(tokens, dexes)
+		}
+	}
+
 	return &QuoteResult{
 		AmountOut: amountOut,
 		GasUsed:   resp.Tx.Gas,
@@ -1237,6 +1467,7 @@ func (o *OneInch) BuildTx(ctx context.Context, p QuoteParams) (*QuoteResult, err
 		Calldata:  calldata,
 		Approval:  approval,
 		RawResult: body,
+		Route:     inchRoute,
 	}, nil
 }
 
@@ -1389,6 +1620,7 @@ func (b *Bebop) BuildTx(ctx context.Context, p QuoteParams) (*QuoteResult, error
 		Calldata:  calldata,
 		Approval:  approval,
 		RawResult: body,
+		Route:     "Direct (Bebop JAM)",
 	}, nil
 }
 
@@ -1526,5 +1758,6 @@ func (t *Transit) BuildTx(ctx context.Context, p QuoteParams) (*QuoteResult, err
 		Calldata:  calldata,
 		Approval:  approval,
 		RawResult: body,
+		Route:     bscSymbol(p.TokenIn.Hex()) + " → " + bscSymbol(p.TokenOut.Hex()),
 	}, nil
 }
