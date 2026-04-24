@@ -28,6 +28,12 @@ quote, err := agg.Quote(ctx, QuoteParams{
 })
 ```
 
+### Run test
+
+```bash
+go test -v -parallel=8 -run TestAggregators_BuildTx github.com/Solaree/bsc-aggregators/client
+```
+
 ## API Keys
 
 Set in `.env`:
