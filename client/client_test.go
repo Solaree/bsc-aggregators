@@ -21,9 +21,6 @@ var testParams = QuoteParams{
 // TestAggregators_BuildTx checks that every calldata-capable aggregator returns
 // a non-zero contract address and calldata.
 func TestAggregators_BuildTx(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
 	httpc := NewHTTPClient(10 * time.Second)
 	aggs := []Aggregator{
 		NewOKX(httpc),
@@ -39,6 +36,10 @@ func TestAggregators_BuildTx(t *testing.T) {
 	for _, a := range aggs {
 		a := a
 		t.Run(a.Name(), func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+
 			q, err := a.BuildTx(ctx, testParams)
 			if err != nil {
 				t.Errorf("error: %v", err)
