@@ -1,5 +1,8 @@
 # bsc-aggregators
 
+
+<img width="649" height="144" alt="Screenshot 2026-04-24 at 14 05 03" src="https://github.com/user-attachments/assets/9ef19d84-a50a-4944-80b0-d733267a14b4" />
+
 Unified Go client for DEX aggregator APIs. Provides quote and swap building across multiple routing engines.
 
 ## Supported Aggregators
